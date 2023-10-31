@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import json
 import matplotlib.pyplot as plt
+import seaborn as sns
+import requests
 
 def write_game_json(game_path):
     command = 'node stats.js'
@@ -64,14 +66,18 @@ def load_single_game(game_file, games):
         elif stock_lost_counter[0] < stock_lost_counter[1]:
             x['winner'] = 0
             x['winner_id'] = player_one["userId"]
+            x['winner_connect_code'] = x["player_one_connect_code"]
             x['winning_character'] = x["player_one_character"]
             x['loser_id'] = player_two["userId"]
+            x['loser_connect_code'] = x["player_two_connect_code"]
             x['losing_character'] = x["player_two_character"]
         else:
             x['winner'] = 1
             x['winner_id'] = player_two["userId"]
+            x['winner_connect_code'] = x["player_two_connect_code"]
             x['winning_character'] = x["player_two_character"]
             x['loser_id'] = player_one["userId"]
+            x['loser_connect_code'] = x["player_one_connect_code"]
             x['losing_character'] = x["player_one_character"]
 
         x['played_at'] = df['metadata.startAt']
@@ -114,11 +120,9 @@ def load_single_game(game_file, games):
         x['player_two_tech_fail'] = df['stats.actionCounts'][0][1]['groundTechCount']['fail']
 
         games = pd.concat([games, x], ignore_index=True)
-        # print(games.shape)
         return games
     else:
-        print("something went wrong with: ", game_file)
-        # print(games.shape)
+        print("No metadata for: ", game_file)
         return games
 
 def load_multiple_games(analytics_path):
@@ -412,4 +416,105 @@ def avg_shmove_counts(games, my_id, me=True):
     shmoves = shmove_counts(games, my_id, me)
     totals = shmoves[['wavedash_count', 'waveland_count', 'airdodge_count', 'dashdance_count', 'spotdodge_count', 'roll_count', 'ledgegrab_count']].sum() / shmoves.shape[0]
     return totals
+
+# opponent info
+
+def convert_code_to_url(connect_code):
+    return "http://slprank.com/rank/" + connect_code.replace("#", "-")
+
+def find_connect_code(games, opponent):    # can use id or display name
+    connect_code_pattern = re.compile("^[A-Z]+\#[0-9]+$")
+    id_pattern = re.compile("^([A-Z]|[a-z]|[0-9]){28}$")
+    if id_pattern.match(opponent):
+        return [opponent]
+    elif connect_code_pattern.match(opponent):
+        return convert_code_to_url(opponent)    
+    else:
+        return find_connect_code_from_display_name(games, name)
+    pass
+    
+def find_connect_code_from_id(games, id): # can use id or display name
+    p1 = games.loc[(games['player_one_user_id'] == id)]['player_one_connect_code']
+    p2 = games.loc[(games['player_two_user_id'] == id)]['player_two_connect_code']
+    return pd.concat([p1, p2]).unique()
+
+def find_connect_code_from_display_name(games, name): 
+    p1 = games.loc[(games['player_one_display_name'] == name)]['player_one_connect_code']
+    p2 = games.loc[(games['player_two_display_name'] == name)]['player_two_connect_code']
+    return pd.concat([p1, p2]).unique()
+
+
+
+# limitation: saves unranked people as silver 1 with 0W/0L and a rank of 1100
+def find_opponent_info(connect_code):
+    url = convert_code_to_url(connect_code)
+    rank_text = requests.get(url).text
+    info = defaultdict(lambda: "")
+    info['connect_code'] = connect_code
+
+    if re.compile(r"^(.*)\ \(").search(rank_text):
+        info['rank'] = re.compile(r"^(.*)\ \(").search(rank_text).group(1)
+        info['rating'] = re.compile(r"\((.*)\ \-").search(rank_text).group(1)
+        info['wins'] = re.compile(r"\-\ ([0-9]+)W").search(rank_text).group(1)
+        info['losses'] = re.compile(r"\/([0-9]+)L").search(rank_text).group(1)
+    return info
+
+def find_opponents_connect_codes(games, my_id):
+    return [x for x in pd.concat([games[['player_one_connect_code']].rename(columns={"player_one_connect_code": "a"}),
+                      games[['player_two_connect_code']].rename(columns={"player_two_connect_code": "a"})]).a.unique() if x]
+
+# Don't run this too much about 35 minutes for 3144 connect_codes
+def save_opponent_info(connect_code_arr):
+    with open('player_info.csv', 'w', newline='') as csvfile:
+        w = csv.writer(csvfile)
+        w.writerow(['date', 'connect_code', 'rank', 'rating', 'wins', 'losses'])
+        for connect_code in connect_code_arr:
+            info = find_opponent_info(connect_code)
+            # time.sleep(10)
+            w.writerow([datetime.datetime.now(), 
+                        info['connect_code'], 
+                        info['rank'],
+                        info['rating'],
+                        info['wins'],
+                        info['losses']])
+
+
+def games_with_ranked_opponents(games, my_connect_code):
+    df = pd.DataFrame(pd.read_csv("player_info.csv"))
+    ranked = df[(df['rating'] != 1100.00) & 
+    (df['rating'].notnull()) & 
+    (df['connect_code'] != my_connect_code)]
+    # ranked.sort_values(by=['rating'], ascending=False)
+    opp1 = pd.merge(ranked.rename(columns={"connect_code": "player_one_connect_code"}), games, on=["player_one_connect_code"]).rename(columns={"player_one_connect_code": "connect_code"})
+    opp2 = pd.merge(ranked.rename(columns={"connect_code": "player_two_connect_code"}), games, on=["player_two_connect_code"]).rename(columns={"player_two_connect_code": "connect_code"})
+    opp = pd.concat([opp1, opp2])
+    opp['opponent_char'] = np.where(opp['connect_code'] == opp['winner_connect_code'], opp['winning_character'], opp['losing_character'])
+    opp['win'] = np.where(opp['connect_code'] == opp['winner_connect_code'], False, True)
+    return opp
+
+def win_rate_for_stage(games):
+  games.groupby(['win', 'stage'])['rating'].mean()  
+def win_rate_for_opponent_character(games):
+  games.groupby(['win', 'opponent_char'])['rating'].mean()  
+def win_rate_vs_ranked_players(games):
+    print(games['win'].mean())
+
+
+def stage_cat_viz(games):
+    to_viz = games[['win', 'connect_code', 'winner_connect_code', 'rating', 'stage', 'opponent_char']].drop_duplicates().reset_index(drop=True)
+    sns.catplot(data=to_viz, x="rating", y="stage", hue="win", jitter=False, s=8)
+
+def opp_char_cat_viz(games):
+    to_viz = games[['win', 'connect_code', 'winner_connect_code', 'rating', 'stage', 'opponent_char']].drop_duplicates().reset_index(drop=True)
+    sns.catplot(data=to_viz, x="opponent_char", y="rating", hue="win", kind="swarm")
+
+def opp_char_box_viz(games):
+    to_viz = games[['win', 'connect_code', 'winner_connect_code', 'rating', 'stage', 'opponent_char']].drop_duplicates().reset_index(drop=True)
+    sns.set(rc={"figure.figsize":(7, 15)})
+    sns.boxplot(data=to_viz, x="rating", y="opponent_char", hue='win')
+
+def stage_box_viz(games):
+    to_viz = games[['win', 'connect_code', 'winner_connect_code', 'rating', 'stage', 'opponent_char']].drop_duplicates().reset_index(drop=True)
+    sns.set(rc={"figure.figsize":(7, 15)})
+    sns.boxplot(data=to_viz, x="rating", y="stage", hue='win')
 
