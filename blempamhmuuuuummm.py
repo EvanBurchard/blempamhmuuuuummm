@@ -41,6 +41,7 @@ def load_single_game(game_file, games):
         x['player_two_display_name'] = player_two["displayName"]
         x['player_one_connect_code'] = player_one["connectCode"]
         x['player_two_connect_code'] = player_two["connectCode"]
+
         x['player_one_user_id'] = player_one["userId"]
         x['player_two_user_id'] = player_two["userId"]
         x['player_one_character'] = characters[str(player_one["characterId"])]['name']
@@ -81,10 +82,23 @@ def load_single_game(game_file, games):
             x['losing_character'] = x["player_one_character"]
 
         x['played_at'] = df['metadata.startAt']
-        x['overall'] = df['stats.overall']
+        # x['overall'] = df['stats.overall']
         x['action_counts'] = df['stats.actionCounts']
         x['game_complete'] = df['stats.gameComplete']
 
+        x['player_one_total_damage'] = df['stats.overall'][0][0]['totalDamage']
+        x['player_two_total_damage'] = df['stats.overall'][0][1]['totalDamage']
+
+        x['player_one_kill_count'] = df['stats.overall'][0][0]['killCount']
+        x['player_two_kill_count'] = df['stats.overall'][0][1]['killCount']
+
+        x['player_one_ipm'] = df['stats.overall'][0][0]['inputsPerMinute']['ratio']
+        x['player_two_ipm'] = df['stats.overall'][0][1]['inputsPerMinute']['ratio']
+
+        x['player_one_digital_ipm'] = df['stats.overall'][0][0]['digitalInputsPerMinute']['ratio']
+        x['player_two_digital_ipm'] = df['stats.overall'][0][1]['digitalInputsPerMinute']['ratio']
+
+        
         # movement
         x['player_one_failed_l_cancels'] = df['stats.actionCounts'][0][0]['lCancelCount']['fail']
         x['player_one_successful_l_cancels'] = df['stats.actionCounts'][0][0]['lCancelCount']['success']
