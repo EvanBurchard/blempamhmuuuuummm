@@ -9,15 +9,25 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import requests
 
+def game_already_exists(file_name, analytics_path):
+    f = os.path.basename(file_name).split('/')[-1].replace('.slp', '.json')
+    save_path = analytics_path + "/" + f
+    if not os.path.exists(save_path):
+        print(save_path, ' is new')
+    return os.path.exists(save_path)
+
 def write_game_json(game_path):
     command = 'node stats.js'
     os.system(command + ' ' + game_path)
 
-def write_games_json(games_path):
+def write_games_json(games_path, analytics_path):
+
     game_files = [games_path + '/' + f for f in listdir(games_path) if isfile(join(games_path, f))]
     # this took about an hour for 6000 games
     for file_name in game_files:
-        if not os.path.exists(file_name):
+
+        if not game_already_exists(file_name, analytics_path):
+            print(file_name)
             write_game_json(file_name)
 
 def load_single_game(game_file, games):
@@ -33,6 +43,7 @@ def load_single_game(game_file, games):
     df = pd.json_normalize(d, max_level=1)
     if d['metadata']:
         x = pd.DataFrame()
+ 
         x['game_length'] = df['stats.playableFrameCount'] / 60
         x['stage'] = df['settings.stageId'].astype(str).map(stages)
         player_one = df["settings.players"][0][0]
@@ -81,7 +92,7 @@ def load_single_game(game_file, games):
             x['loser_connect_code'] = x["player_one_connect_code"]
             x['losing_character'] = x["player_one_character"]
 
-        x['played_at'] = df['metadata.startAt']
+        x['played_at'] = pd.to_datetime(df['metadata.startAt'])
         # x['overall'] = df['stats.overall']
         x['action_counts'] = df['stats.actionCounts']
         x['game_complete'] = df['stats.gameComplete']
@@ -133,6 +144,8 @@ def load_single_game(game_file, games):
         x['player_two_tech_neutral'] = df['stats.actionCounts'][0][1]['groundTechCount']['neutral']
         x['player_two_tech_fail'] = df['stats.actionCounts'][0][1]['groundTechCount']['fail']
 
+        x['matchId'] = df['settings.matchInfo'][0]['matchId']
+        
         games = pd.concat([games, x], ignore_index=True)
         return games
     else:
@@ -148,7 +161,7 @@ def load_multiple_games(analytics_path):
         except:
             print("An exception occurred for: ") 
             print(f)
-    return games
+    return games.sort_values(by='played_at', ignore_index=True)
 
 def find_my_id(games):
     return games['player_one_user_id'].mode()[0]
